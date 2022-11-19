@@ -44,6 +44,10 @@ class ExperimentBuilder(nn.Module):
             self.device =  torch.cuda.current_device()
             self.model.to(self.device)  # sends the model from the cpu to the gpu
             print('Use GPU', self.device)
+        elif torch.backends.mps.is_available():  # It's my personal macbook setup for debugging
+            self.device = torch.device("mps")
+            self.model.to(self.device)  # sends the model to the M1 chip
+            print('Use MPS', self.device)
         else:
             print("use CPU")
             self.device = torch.device('cpu')  # sets the device to be CPU
@@ -153,18 +157,19 @@ class ExperimentBuilder(nn.Module):
         """
         Complete the code in the block below to collect absolute mean of the gradients for each layer in all_grads with the             layer names in layers.
         """
-        ########################################
-        
-        
-        ########################################
+        for name, parameter in named_parameters:
+            if parameter.requires_grad and not name.endswith("bias"):
+                split_names = name.split(".")
+                if len(split_names) > 2:  # i.e. layer_dict.input_conv.layer_dict.conv_0.weight
+                    postprocessed_name = f"{split_names[1]}_{split_names[3]}"
+                else:
+                    postprocessed_name = f"weight_{split_names[0]}"
+                layers.append(postprocessed_name)
+                all_grads.append(parameter.grad.abs().mean().cpu())
             
-        
         plt = self.plot_func_def(all_grads, layers)
         
         return plt
-    
-    
-    
     
     def run_train_iter(self, x, y):
         
@@ -173,14 +178,13 @@ class ExperimentBuilder(nn.Module):
             device=self.device)  # send data to device as torch tensors
         out = self.model.forward(x)  # forward the data in the model
 
-
         loss = F.cross_entropy(input=out, target=y)  # compute loss
 
         self.optimizer.zero_grad()  # set all weight grads from previous training iters to 0
         loss.backward()  # backpropagate to compute gradients for current iter loss
         
-        self.learning_rate_scheduler.step(epoch=self.current_epoch)
         self.optimizer.step()  # update network parameters
+        self.learning_rate_scheduler.step(epoch=self.current_epoch)  # Pytorch >= 1.1.0 requires scheduler to be executed after optimizer step
         _, predicted = torch.max(out.data, 1)  # get argmax of predictions
         accuracy = np.mean(list(predicted.eq(y.data).cpu()))  # compute accuracy
         return loss.cpu().data.numpy(), accuracy
@@ -299,7 +303,7 @@ class ExperimentBuilder(nn.Module):
             if not os.path.exists(os.path.join(self.experiment_saved_models, 'gradient_flow_plots')):
                 os.mkdir(os.path.join(self.experiment_saved_models, 'gradient_flow_plots'))
                 # plt.legend(loc="best")
-            plt.savefig(os.path.join(self.experiment_saved_models, 'gradient_flow_plots', "epoch{}.pdf".format(str(epoch_idx))))
+            plt.savefig(os.path.join(self.experiment_saved_models, 'gradient_flow_plots', "epoch{}.pdf".format(str(epoch_idx))), bbox_inches='tight')
             ################################################################
         
         print("Generating test set evaluation metrics")
